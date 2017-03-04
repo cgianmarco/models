@@ -49,6 +49,8 @@ FLAGS = None
 
 # pylint: disable=line-too-long
 DATA_URL = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
+model_dir = os.path.dirname(os.path.abspath(__file__)) + "/data/"
+num_top_predictions = 5
 # pylint: enable=line-too-long
 
 
@@ -60,10 +62,10 @@ class NodeLookup(object):
                uid_lookup_path=None):
     if not label_lookup_path:
       label_lookup_path = os.path.join(
-          FLAGS.model_dir, 'imagenet_2012_challenge_label_map_proto.pbtxt')
+          model_dir, 'imagenet_2012_challenge_label_map_proto.pbtxt')
     if not uid_lookup_path:
       uid_lookup_path = os.path.join(
-          FLAGS.model_dir, 'imagenet_synset_to_human_label_map.txt')
+          model_dir, 'imagenet_synset_to_human_label_map.txt')
     self.node_lookup = self.load(label_lookup_path, uid_lookup_path)
 
   def load(self, label_lookup_path, uid_lookup_path):
@@ -121,13 +123,13 @@ def create_graph():
   """Creates a graph from saved GraphDef file and returns a saver."""
   # Creates graph from saved graph_def.pb.
   with tf.gfile.FastGFile(os.path.join(
-      FLAGS.model_dir, 'classify_image_graph_def.pb'), 'rb') as f:
+      os.path.dirname(os.path.abspath(__file__)) + "/data/", 'classify_image_graph_def.pb'), 'rb') as f:
     graph_def = tf.GraphDef()
     graph_def.ParseFromString(f.read())
     _ = tf.import_graph_def(graph_def, name='')
 
 
-def run_inference_on_image(image):
+def run_inference_on_image(image_paths):
   """Runs inference on an image.
 
   Args:
@@ -136,9 +138,7 @@ def run_inference_on_image(image):
   Returns:
     Nothing
   """
-  if not tf.gfile.Exists(image):
-    tf.logging.fatal('File does not exist %s', image)
-  image_data = tf.gfile.FastGFile(image, 'rb').read()
+  image_data = np.array([tf.gfile.FastGFile(path, 'rb').read() for path in image_paths])
 
   # Creates graph from saved GraphDef.
   create_graph()
@@ -153,23 +153,23 @@ def run_inference_on_image(image):
     #   encoding of the image.
     # Runs the softmax tensor by feeding the image_data as input to the graph.
     softmax_tensor = sess.graph.get_tensor_by_name('softmax:0')
-    predictions = sess.run(softmax_tensor,
-                           {'DecodeJpeg/contents:0': image_data})
-    predictions = np.squeeze(predictions)
 
-    # Creates node ID --> English string lookup.
-    node_lookup = NodeLookup()
+    transfer_layer = sess.graph.get_tensor_by_name('pool_3:0')
+    transfer_values = []
+    for i in range(len(image_data)):
+      predictions = sess.run(softmax_tensor,
+                            {'DecodeJpeg/contents:0': image_data[i]})
+      transfer_values.append(sess.run(transfer_layer))
+      print("Processed image number " + str(i))
 
-    top_k = predictions.argsort()[-FLAGS.num_top_predictions:][::-1]
-    for node_id in top_k:
-      human_string = node_lookup.id_to_string(node_id)
-      score = predictions[node_id]
-      print('%s (score = %.5f)' % (human_string, score))
+
+    return np.array(transfer_values)
 
 
 def maybe_download_and_extract():
   """Download and extract model tar file."""
-  dest_directory = FLAGS.model_dir
+  # dest_directory = FLAGS.model_dir
+  dest_directory = os.path.dirname(os.path.abspath(__file__)) + "/data/"
   if not os.path.exists(dest_directory):
     os.makedirs(dest_directory)
   filename = DATA_URL.split('/')[-1]
@@ -224,4 +224,4 @@ if __name__ == '__main__':
       help='Display this many predictions.'
   )
   FLAGS, unparsed = parser.parse_known_args()
-  tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
+  tf.app.run(main=main)
